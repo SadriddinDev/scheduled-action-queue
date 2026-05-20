@@ -7,7 +7,6 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models import Task, TaskLog
