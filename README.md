@@ -20,7 +20,7 @@ A durable, concurrent-safe scheduled task queue built with **FastAPI** and **Pos
 | Database | PostgreSQL 16 |
 | ORM | SQLAlchemy 2 (async) |
 | Driver | asyncpg |
-| Worker | asyncio background task |
+| Worker | Separate Docker container (`run_worker.py`) |
 | Container | Docker + Docker Compose |
 
 ## API
@@ -57,16 +57,37 @@ pending → cancelled            (manually cancelled before execution)
 ## Project Structure
 
 ```
-app/
-├── main.py             # FastAPI routes + app lifespan
-├── models.py           # SQLAlchemy models (Task, TaskLog)
-├── schemas.py          # Pydantic request/response schemas
-├── database.py         # Async engine + session factory
-├── worker.py           # Background polling worker
-└── action_handlers.py  # Action handler registry
+.
+├── run_worker.py           # Worker entrypoint (runs as a separate container)
+├── docker-compose.yml
+├── Dockerfile
+└── app/
+    ├── main.py             # FastAPI routes + app lifespan
+    ├── models.py           # SQLAlchemy models (Task, TaskLog)
+    ├── schemas.py          # Pydantic request/response schemas
+    ├── database.py         # Async engine + session factory
+    ├── worker.py           # Background polling worker logic
+    └── action_handlers.py  # Action handler registry
+```
+
+## Deployment Architecture
+
+```
+docker-compose
+├── db       — PostgreSQL 16
+├── api      — uvicorn app.main:app   (HTTP, port 8000)
+└── worker   — python run_worker.py   (no open port)
+```
+
+The `api` and `worker` services are built from the **same image** but run different commands. Both connect to the same PostgreSQL database. The worker uses `SELECT FOR UPDATE SKIP LOCKED`, so you can safely scale it horizontally:
+
+```bash
+docker compose up --scale worker=3
 ```
 
 ## How the Worker Works
+
+The worker runs as a **separate process** (`run_worker.py`) inside its own Docker container — completely isolated from the API process.
 
 1. Every 5 seconds, poll for due tasks:
    ```sql
@@ -79,7 +100,7 @@ app/
 3. Execute the action handler outside the transaction (so slow tasks don't hold locks).
 4. On success → `completed`. On failure → schedule retry with backoff or mark `failed`.
 
-`SKIP LOCKED` is the key to concurrent safety: each worker atomically skips rows already locked by another worker, so no task is ever processed twice.
+`SKIP LOCKED` is the key to concurrent safety: each worker atomically skips rows already locked by another worker, so no task is ever processed twice. Heavy worker load does not affect API latency, and vice versa.
 
 ## Retry Logic
 
@@ -114,7 +135,15 @@ curl -X POST http://localhost:8000/tasks \
 **With Docker Compose (recommended):**
 
 ```bash
-docker compose up
+docker compose up --build
+```
+
+This starts three containers: `db`, `api` (port 8000), and `worker`.
+
+To run multiple workers in parallel:
+
+```bash
+docker compose up --build --scale worker=3
 ```
 
 **With a local PostgreSQL:**
@@ -124,7 +153,12 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 export DATABASE_URL="postgresql+asyncpg://USER@localhost:5432/taskqueue"
+
+# Terminal 1 — API
 uvicorn app.main:app --reload
+
+# Terminal 2 — Worker
+python run_worker.py
 ```
 
 Interactive API docs available at `http://localhost:8000/docs`.

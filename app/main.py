@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -12,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import engine, Base, get_db
 from app.models import Task
 from app.schemas import TaskCreate, TaskResponse, TaskDetailResponse
-from app.worker import worker_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,17 +25,8 @@ VALID_STATUSES = {"pending", "running", "completed", "failed", "cancelled"}
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    worker_task = asyncio.create_task(worker_loop())
     logger.info("Application started")
-
     yield
-
-    worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
     logger.info("Application shut down")
 
 
