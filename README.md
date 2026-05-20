@@ -21,6 +21,7 @@ A durable, concurrent-safe scheduled task queue built with **FastAPI** and **Pos
 | ORM | SQLAlchemy 2 (async) |
 | Driver | asyncpg |
 | Worker | Separate Docker container (`run_worker.py`) |
+| Migrations | Alembic (separate `migrate` container) |
 | Container | Docker + Docker Compose |
 
 ## API
@@ -59,6 +60,11 @@ pending → cancelled            (manually cancelled before execution)
 ```
 .
 ├── run_worker.py           # Worker entrypoint (runs as a separate container)
+├── alembic.ini             # Alembic config (URL is read from DATABASE_URL env var)
+├── alembic/
+│   ├── env.py              # Async-compatible migration environment
+│   └── versions/
+│       └── 0001_initial_schema.py
 ├── docker-compose.yml
 ├── Dockerfile
 └── app/
@@ -75,11 +81,12 @@ pending → cancelled            (manually cancelled before execution)
 ```
 docker-compose
 ├── db       — PostgreSQL 16
+├── migrate  — alembic upgrade head   (runs once, exits)
 ├── api      — uvicorn app.main:app   (HTTP, port 8000)
 └── worker   — python run_worker.py   (no open port)
 ```
 
-The `api` and `worker` services are built from the **same image** but run different commands. Both connect to the same PostgreSQL database. The worker uses `SELECT FOR UPDATE SKIP LOCKED`, so you can safely scale it horizontally:
+All four services are built from the **same image** but run different commands. `api` and `worker` only start after `migrate` exits successfully (`service_completed_successfully`), so the schema is always up to date before any traffic hits the database. The worker uses `SELECT FOR UPDATE SKIP LOCKED`, so you can safely scale it horizontally:
 
 ```bash
 docker compose up --scale worker=3
@@ -154,12 +161,32 @@ pip install -r requirements.txt
 
 export DATABASE_URL="postgresql+asyncpg://USER@localhost:5432/taskqueue"
 
+# Apply migrations first
+alembic upgrade head
+
 # Terminal 1 — API
 uvicorn app.main:app --reload
 
 # Terminal 2 — Worker
 python run_worker.py
 ```
+
+## Database Migrations
+
+Migrations live in `alembic/versions/`. After changing a model:
+
+```bash
+# Generate a new migration (requires a running DB)
+alembic revision --autogenerate -m "describe your change"
+
+# Review the generated file in alembic/versions/, then apply:
+alembic upgrade head
+
+# Roll back one step:
+alembic downgrade -1
+```
+
+In Docker, the `migrate` service runs `alembic upgrade head` automatically on every `docker compose up`.
 
 Interactive API docs available at `http://localhost:8000/docs`.
 

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import engine, Base, get_db
+from app.database import get_db
 from app.models import Task
 from app.schemas import TaskCreate, TaskResponse, TaskDetailResponse
 
@@ -23,8 +23,6 @@ VALID_STATUSES = {"pending", "running", "completed", "failed", "cancelled"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     logger.info("Application started")
     yield
     logger.info("Application shut down")
